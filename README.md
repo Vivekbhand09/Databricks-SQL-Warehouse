@@ -339,16 +339,3 @@ Add screenshots of the completed Job run and the Delta Live Tables Pipeline grap
 
 ---
 
-## 📂 Repository Structure
-
-```
-Databricks-SQL-Warehouse/
-├── 01-Warehouse-Fundamentals/     → What is a SQL Warehouse, warehouse types, sizing & scaling
-├── 02-SQL-Editor-and-Tooling/     → Databricks Overview, SQL Editor, Query Parameters, Query Snippets
-├── 03-Dimensional-Modeling/       → Dimensional Data Model Overview
-├── 04-Ingestion/                  → Streaming Tables, Incremental Data Load
-├── 05-Change-Management/          → Slowly Changing Dimensions, Auto CDC
-├── 06-Delta-Live-Tables/          → Delta Live Tables overview and pipeline design
-├── 07-Performance/                → Query Profiling, Query Caching
-└── 08-Operations/                 → Query Scheduling, Alerts, ETL Jobs, AI Chatbot
-```
