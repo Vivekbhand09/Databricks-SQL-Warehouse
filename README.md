@@ -119,9 +119,28 @@ Operating in Production
 **Focus:** Making SQL work reusable instead of rewriting the same logic over and over.
 
 - Built **parameterized queries**, letting a single query be re-run against different filter values, date ranges, or IDs without editing the SQL itself
+- Went beyond hardcoded filters to a fully dynamic query using `IDENTIFIER()`, so even the **catalog, schema, and table name** are passed in as parameters — not just the `WHERE` clause values
 - Created **query snippets** for commonly repeated SQL patterns, cutting down repetitive typing and standardizing how common logic (like date filters or joins) gets written across queries
 
-**Takeaway:** Parameters and snippets turn one-off queries into reusable, shareable building blocks — a small habit with a big productivity payoff.
+```sql
+-- Static, hardcoded filter query
+SELECT *
+FROM products
+WHERE product_id = :product_id AND price > :price
+
+-- Fully dynamic query — catalog, schema, table AND column name are all parameters
+SELECT :col1
+FROM IDENTIFIER(:catalog || '.' || :schema || '.' || :table)
+WHERE IDENTIFIER(:col_product_id) = :product_id AND price > :price
+```
+
+```sql
+-- Query Snippet — reusable block saved via SQL Editor → ⋮ → View → Query Snippets → Create Snippet
+SELECT * FROM products
+WHERE product_id = 1
+```
+
+**Takeaway:** Parameters and snippets turn one-off queries into reusable, shareable building blocks — using `IDENTIFIER()` to parameterize the catalog/schema/table itself (not just filter values) is what makes a single query reusable across completely different tables.
 
 ---
 
@@ -139,9 +158,22 @@ Operating in Production
 **Focus:** Moving from static, full-refresh tables to tables that stay up to date automatically and efficiently.
 
 - Learned how **streaming tables** continuously ingest new data as it lands, rather than requiring manual, scheduled reloads
+- Built streaming tables directly on top of source dimension/fact tables using `CREATE OR REFRESH STREAMING TABLE ... AS SELECT * FROM STREAM(...)`, so each streaming table incrementally tracks new rows appended to its underlying source table
 - Implemented **incremental data loading**, so pipelines only process new or changed records instead of reprocessing entire datasets on every run — the same watermark-driven CDC principle applied at the warehouse level
 
-**Takeaway:** Streaming tables and incremental loads are what make a pipeline scalable — reprocessing everything on every run simply doesn't work past a certain data volume.
+```sql
+-- Streaming tables built on top of source dimension/fact tables
+CREATE OR REFRESH STREAMING TABLE workspace.stg.stream_passengers
+AS SELECT * FROM STREAM(workspace.stg.dim_passengers);
+
+CREATE OR REFRESH STREAMING TABLE workspace.stg.stream_airports
+AS SELECT * FROM STREAM(workspace.stg.dim_airports);
+
+CREATE OR REFRESH STREAMING TABLE workspace.stg.stream_bookings
+AS SELECT * FROM STREAM(workspace.stg.fact_bookings);
+```
+
+**Takeaway:** Streaming tables and incremental loads are what make a pipeline scalable — reprocessing everything on every run simply doesn't work past a certain data volume. `STREAM(...)` on a source table means only newly appended rows flow into the streaming table on each refresh.
 
 ---
 
@@ -150,8 +182,33 @@ Operating in Production
 
 - Applied **Slowly Changing Dimension (SCD)** logic to track how dimension attributes evolve — deciding when a change should simply overwrite a value versus when history needs to be preserved
 - Learned **Auto CDC** in Databricks — a native change-data-capture mechanism that simplifies the upsert/merge pattern typically needed to keep tables in sync with changing source data, reducing the amount of manual `MERGE` logic required
+- Implemented **Auto CDC as SCD Type 2** for two separate dimensions (`DimAirports`, `DimPassengers`) — each fed by its own streaming table, keyed on its natural key, and sequenced so late-arriving/out-of-order records are still applied correctly
 
-**Takeaway:** Auto CDC shows the "managed" alternative to writing SCD `MERGE` statements by hand — same underlying problem, less boilerplate.
+```sql
+-- Auto CDC into a Type 2 dimension, sourced from a streaming table
+
+CREATE OR REFRESH STREAMING TABLE workspace.enr.DimAirports;
+
+CREATE FLOW flow1
+AS AUTO CDC INTO
+  DimAirports
+FROM stream(stg.stream_airports)
+  KEYS (airport_id)
+  SEQUENCE BY airport_id
+  STORED AS SCD TYPE 2;
+
+CREATE OR REFRESH STREAMING TABLE workspace.enr.DimPassengers;
+
+CREATE FLOW flow2
+AS AUTO CDC INTO
+  DimPassengers
+FROM stream(stg.stream_passengers)
+  KEYS (passenger_id)
+  SEQUENCE BY passenger_id
+  STORED AS SCD TYPE 2;
+```
+
+**Takeaway:** `AUTO CDC INTO ... STORED AS SCD TYPE 2` replaces the entire hand-written two-`MERGE` expire-and-insert pattern with a single declarative flow — Databricks handles the row expiry, `is_current` tracking, and new-row insert automatically, keyed and sequenced by whatever natural key you define.
 
 ---
 
@@ -181,8 +238,60 @@ Operating in Production
 - Set up **query scheduling** to run reports automatically on a recurring cadence, without manual intervention
 - Configured **alerts** to trigger notifications based on query result conditions — catching data issues or business events as they happen rather than after the fact
 - Used **Databricks ETL Jobs** to orchestrate multi-step pipelines, chaining notebooks and tasks together with dependencies, retries, and scheduling
+- Built an **ETL Job** that chains two tasks in sequence: `Query1` (a filtered lookup against the `products` table) followed by `sqlFile.sql` (which materializes a filtered result into a new table) — demonstrating a multi-task, dependency-ordered job rather than a single standalone query
+- Built a separate **Delta Live Tables pipeline** (defined in `SCDs.sql`) that owns the streaming-table-to-SCD-Type-2 flow for `DimAirports` and `DimPassengers` end to end, so the CDC logic runs as a managed, monitored pipeline instead of an ad-hoc notebook
 
-**Takeaway:** This is where a pipeline stops being something you run manually and becomes something that runs — and watches — itself.
+```sql
+-- Task 1: Query1 — filtered lookup feeding the job
+SELECT
+  product_name
+FROM
+  workspace.warehouse.products
+WHERE
+  product_name = 'Product A'
+
+-- Task 2: sqlFile.sql — materializes a parameterized filter into a new table
+CREATE TABLE workspace.stg.test_table
+AS
+SELECT * FROM workspace.warehouse.products
+WHERE
+  product_name = :prod_para
+```
+
+```sql
+-- Pipeline definition (SCDs.sql) — the streaming + Auto CDC flow, run as a DLT pipeline
+CREATE OR REFRESH STREAMING TABLE workspace.enr.DimAirports;
+
+CREATE FLOW flow1
+AS AUTO CDC INTO
+  DimAirports
+FROM stream(stg.stream_airports)
+  KEYS (airport_id)
+  SEQUENCE BY airport_id
+  STORED AS SCD TYPE 2;
+
+CREATE OR REFRESH STREAMING TABLE workspace.enr.DimPassengers;
+
+CREATE FLOW flow2
+AS AUTO CDC INTO
+  DimPassengers
+FROM stream(stg.stream_passengers)
+  KEYS (passenger_id)
+  SEQUENCE BY passenger_id
+  STORED AS SCD TYPE 2;
+```
+
+**Takeaway:** This is where a pipeline stops being something you run manually and becomes something that runs — and watches — itself. The **Job** (`Query1` → `sqlFile.sql`) shows task-level orchestration with dependencies; the **Pipeline** (`SCDs.sql`) shows the same idea applied to a continuous, declarative DLT flow.
+
+#### 📸 Job & Pipeline Runs
+
+<!--
+Add screenshots of the completed Job run and the Delta Live Tables Pipeline graph here, e.g.:
+
+![ETL Job Run](./screenshots/etl-job-run.png)
+![DLT Pipeline Graph](./screenshots/dlt-pipeline-graph.png)
+-->
+
 
 ---
 
