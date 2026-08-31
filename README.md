@@ -285,13 +285,8 @@ FROM stream(stg.stream_passengers)
 
 #### 📸 Job & Pipeline Runs
 
-<!--
-Add screenshots of the completed Job run and the Delta Live Tables Pipeline graph here, e.g.:
-
 ![ETL Job Run](./Utils/job.png)
 ![DLT Pipeline Graph](./Utils/pipeline.png)
--->
-
 
 ---
 
