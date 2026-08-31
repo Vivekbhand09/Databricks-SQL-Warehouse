@@ -288,8 +288,8 @@ FROM stream(stg.stream_passengers)
 <!--
 Add screenshots of the completed Job run and the Delta Live Tables Pipeline graph here, e.g.:
 
-![ETL Job Run](./screenshots/etl-job-run.png)
-![DLT Pipeline Graph](./screenshots/dlt-pipeline-graph.png)
+![ETL Job Run](./Utils/job.png)
+![DLT Pipeline Graph](./Utils/pipeline.png)
 -->
 
 
